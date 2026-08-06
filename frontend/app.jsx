@@ -31,6 +31,17 @@ const DATA_SOURCE_CITIES = {
   sample: "Houston",
 };
 
+// Accurate per-source description — deliberately NOT one blanket "this is
+// all synthetic" statement, since that would be factually wrong for
+// "live": that source is real third-party data from SimplyRETS' public
+// sandbox API, not something created for this project at all.
+const DATA_SOURCE_NOTES = {
+  generated: "Synthetic data, generated for this project — not real property listings.",
+  realistic: "Hand-written sample data for this project — not real property listings.",
+  sample: "Small hand-edited test dataset for this project — not real property listings.",
+  live: "Real third-party data from SimplyRETS' public sandbox API — not created for this project, and not guaranteed to reflect current real-world listings.",
+};
+
 const AI_PROVIDER_LABELS = {
   anthropic: "Claude",
   openai: "OpenAI",
@@ -151,6 +162,19 @@ function ResultCard({ listing, isPartial }) {
 
         {expanded && (
           <div className="result-card__expanded">
+            {listing.photos && listing.photos.length > 0 && (
+              <div className="result-card__photos">
+                {listing.photos.map((url, i) => (
+                  <img
+                    key={i}
+                    src={url}
+                    alt={`${listing.address || "Listing"} photo ${i + 1}`}
+                    className="result-card__photo"
+                    onError={(e) => { e.target.style.display = "none"; }}
+                  />
+                ))}
+              </div>
+            )}
             <p className="result-card__expanded-label">Full description (verify Claude's quote against this directly)</p>
             <p className="result-card__expanded-description">{listing.description || "No description available."}</p>
 
@@ -184,6 +208,7 @@ function App() {
   const [backendMeta, setBackendMeta] = useState(null);
   const [selectedDataSource, setSelectedDataSource] = useState(null);
   const [selectedAiProvider, setSelectedAiProvider] = useState(null);
+  const [selectedAiModel, setSelectedAiModel] = useState(null); // dev/POC tool — see AVAILABLE_MODELS in app/config.py
 
   useEffect(() => {
     fetch(`${API_BASE}/`)
@@ -195,9 +220,24 @@ function App() {
         // per-request without changing the server's actual config file.
         setSelectedDataSource(data.data_source);
         setSelectedAiProvider(data.ai_provider);
+        setSelectedAiModel(data.current_model?.[data.ai_provider] || null);
       })
       .catch(() => setBackendMeta(null)); // silently ignore — header just falls back to a generic label
   }, []);
+
+  // Called directly from the provider dropdown's onChange, not a useEffect
+  // watching selectedAiProvider — a watching effect would ALSO fire during
+  // the initial fetch above (when selectedAiProvider first gets set from
+  // null to a real value), incorrectly overwriting the real .env-default
+  // model with just "whichever model happens to be first in the list."
+  // Calling this only from a genuine click sidesteps that ambiguity
+  // entirely: it only ever runs on real user interaction.
+  function handleProviderChange(newProvider) {
+    setSelectedAiProvider(newProvider);
+    if (backendMeta?.available_models?.[newProvider]) {
+      setSelectedAiModel(backendMeta.available_models[newProvider][0]);
+    }
+  }
 
   // Only "realistic" and "generated" data carry a schools field at all — "live"
   // (SimplyRETS sandbox) and "sample" listings have none, so the school rating
@@ -314,6 +354,7 @@ function App() {
           filters: filterBody,
           preferences: preferences.trim(),
           ai_provider: selectedAiProvider,
+          ai_model: selectedAiModel,
         }),
         signal: controller.signal,
       });
@@ -385,12 +426,12 @@ function App() {
               )}
             </span>
             <span className="title-block__control">
-              <strong>Matched by</strong>
+              <strong>Matched by LLM Provider</strong>
               {backendMeta ? (
                 <select
                   className="title-block__select"
                   value={selectedAiProvider || ""}
-                  onChange={(e) => setSelectedAiProvider(e.target.value)}
+                  onChange={(e) => handleProviderChange(e.target.value)}
                   disabled={skipAI}
                   title={skipAI ? "Not used in Traditional mode" : undefined}
                 >
@@ -400,7 +441,31 @@ function App() {
                 </select>
               ) : "connecting..."}
             </span>
+            {backendMeta && !skipAI && backendMeta.available_models?.[selectedAiProvider]?.length > 0 && (
+              <span className="title-block__control">
+                <strong>Model</strong>
+                <select
+                  className="title-block__select"
+                  value={selectedAiModel || ""}
+                  onChange={(e) => setSelectedAiModel(e.target.value)}
+                >
+                  {backendMeta.available_models[selectedAiProvider].map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </span>
+            )}
           </div>
+          {selectedDataSource && DATA_SOURCE_NOTES[selectedDataSource] && (
+            <p className="title-block__source-note">
+              {DATA_SOURCE_NOTES[selectedDataSource]}
+            </p>
+          )}
+          {!skipAI && (
+            <p className="title-block__dev-note">
+              The Model dropdown is a developer/POC tool for evaluating different LLMs side by side — remove it before shipping to production.
+            </p>
+          )}
         </div>
       </header>
 

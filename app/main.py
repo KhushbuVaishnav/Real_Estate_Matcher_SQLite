@@ -11,7 +11,7 @@ Then open http://127.0.0.1:8000/docs for interactive Swagger docs.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings, VALID_DATA_SOURCES, VALID_AI_PROVIDERS
+from app.config import settings, VALID_DATA_SOURCES, VALID_AI_PROVIDERS, AVAILABLE_MODELS
 from app.routers import listings, match
 
 settings.validate()  # fail fast on misconfiguration (bad DATA_SOURCE, missing API key, etc.)
@@ -44,4 +44,6 @@ def root():
         "ai_provider": settings.AI_PROVIDER,        # default from .env — overridable per-request
         "available_data_sources": list(VALID_DATA_SOURCES),
         "available_ai_providers": list(VALID_AI_PROVIDERS),
+        "current_model": {"anthropic": settings.ANTHROPIC_MODEL, "openai": settings.OPENAI_MODEL},
+        "available_models": AVAILABLE_MODELS,  # dev/POC tool — see config.py's AVAILABLE_MODELS docstring
     }

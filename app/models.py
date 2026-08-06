@@ -69,6 +69,11 @@ class MatchRequest(BaseModel):
         None, example=None,
         description=f'Overrides AI_PROVIDER from .env for this request only. One of: {VALID_AI_PROVIDERS}.'
     )
+    ai_model: Optional[str] = Field(
+        None, example=None,
+        description='Dev/POC only — overrides ANTHROPIC_MODEL/OPENAI_MODEL from .env for this request only. '
+                    'Must match the provider actually in use (ai_provider, or AI_PROVIDER from .env if unset).'
+    )
 
     @field_validator("ai_provider")
     @classmethod

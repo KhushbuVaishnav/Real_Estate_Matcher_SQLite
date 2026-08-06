@@ -47,7 +47,7 @@ def match_listings(request: MatchRequest):
         return {"count": 0, "matches": []}
 
     try:
-        ranked = matching_service.rank_listings(request.preferences, listings, request.ai_provider)
+        ranked = matching_service.rank_listings(request.preferences, listings, request.ai_provider, request.ai_model)
     except matching_service.MatchingError as e:
         print(f"[match error] {e.technical_detail}")  # full detail server-side only
         raise HTTPException(status_code=502, detail=e.client_message)  # clean, jargon-free for the browser
@@ -66,7 +66,7 @@ def match_listings(request: MatchRequest):
 def start_match(request: MatchRequest):
     """Kicks off matching in a background thread, returns immediately with a job_id to poll."""
     listings = _get_filtered_listings(request)
-    job_id = matching_service.start_match_job(request.preferences, listings, request.ai_provider)
+    job_id = matching_service.start_match_job(request.preferences, listings, request.ai_provider, request.ai_model)
     job = matching_service.get_job(job_id)
     return {"job_id": job_id, "total_batches": job["total_batches"]}
 

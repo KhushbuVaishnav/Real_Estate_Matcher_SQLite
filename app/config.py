@@ -31,6 +31,18 @@ DATA_DIR = BASE_DIR / "data"
 VALID_DATA_SOURCES = ("live", "sample", "realistic", "generated")
 VALID_AI_PROVIDERS = ("anthropic", "openai")
 
+# Dev/POC tool: lets the UI offer a model dropdown per provider, for quickly
+# comparing model quality/cost without editing .env. Only claude-haiku-4-5
+# and gpt-5.6-luna are confirmed passing this project's own accuracy tests
+# (scripts/verify_test_cases.py --with-ai) — the others are listed so they
+# can be evaluated, not because they're already verified. This entire
+# feature is meant to be removed once the product ships; it exists purely
+# to make side-by-side model evaluation easy during development.
+AVAILABLE_MODELS = {
+    "anthropic": ["claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+    "openai": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+}
+
 
 class Settings:
     # --- Data source ---

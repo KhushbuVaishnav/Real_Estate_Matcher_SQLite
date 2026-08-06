@@ -200,8 +200,10 @@ def _humanize_anthropic_error(e) -> tuple[str, str]:
     return _CLIENT_MSG_CONFIG, technical
 
 
-def _score_batch_anthropic(user_preferences: str, listings_batch: list[dict], on_retry=None) -> list[dict]:
+def _score_batch_anthropic(user_preferences: str, listings_batch: list[dict], ai_model: str = None, on_retry=None) -> list[dict]:
     import anthropic
+
+    model = ai_model or settings.ANTHROPIC_MODEL
 
     if not settings.ANTHROPIC_API_KEY:
         raise MatchingError(
@@ -219,7 +221,7 @@ def _score_batch_anthropic(user_preferences: str, listings_batch: list[dict], on
         # you the normal Message object, same as client.messages.create()
         # would have returned directly.
         raw = client.messages.with_raw_response.create(
-            model=settings.ANTHROPIC_MODEL,
+            model=model,
             max_tokens=settings.MAX_TOKENS,
             temperature=settings.TEMPERATURE,
             system=SYSTEM_PROMPT,
@@ -245,7 +247,7 @@ def _score_batch_anthropic(user_preferences: str, listings_batch: list[dict], on
     except anthropic.NotFoundError as e:
         raise MatchingError(
             _CLIENT_MSG_CONFIG,
-            f"Model '{settings.ANTHROPIC_MODEL}' not found or not available on your account.",
+            f"Model '{model}' not found or not available on your account.",
         ) from e
     except anthropic.APIStatusError as e:
         raise MatchingError(*_humanize_anthropic_error(e)) from e
@@ -320,9 +322,11 @@ def _humanize_openai_error(e) -> tuple[str, str]:
     return _CLIENT_MSG_CONFIG, f"OpenAI API error ({e.status_code}): {message}"
 
 
-def _score_batch_openai(user_preferences: str, listings_batch: list[dict], on_retry=None) -> list[dict]:
+def _score_batch_openai(user_preferences: str, listings_batch: list[dict], ai_model: str = None, on_retry=None) -> list[dict]:
     import openai
     from openai import OpenAI, AuthenticationError, NotFoundError, APIStatusError
+
+    model = ai_model or settings.OPENAI_MODEL
 
     if not settings.OPENAI_API_KEY:
         raise MatchingError(
@@ -345,7 +349,7 @@ def _score_batch_openai(user_preferences: str, listings_batch: list[dict], on_re
         # This makes the behavior empirically verifiable rather than
         # something we just assume works.
         kwargs = {
-            "model": settings.OPENAI_MODEL,
+            "model": model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
@@ -378,7 +382,7 @@ def _score_batch_openai(user_preferences: str, listings_batch: list[dict], on_re
     except NotFoundError as e:
         raise MatchingError(
             _CLIENT_MSG_CONFIG,
-            f"Model '{settings.OPENAI_MODEL}' not found or not available on your account.",
+            f"Model '{model}' not found or not available on your account.",
         ) from e
     except APIStatusError as e:
         raise MatchingError(*_humanize_openai_error(e)) from e
@@ -431,18 +435,18 @@ def _compute_deterministic_scores(raw_items: list[dict]) -> list[dict]:
     return results
 
 
-def score_batch(user_preferences: str, listings_batch: list[dict], ai_provider: str = None, on_retry=None) -> list[dict]:
+def score_batch(user_preferences: str, listings_batch: list[dict], ai_provider: str = None, ai_model: str = None, on_retry=None) -> list[dict]:
     provider = ai_provider or settings.AI_PROVIDER
     if provider not in VALID_AI_PROVIDERS:
         raise ValueError(f"ai_provider must be one of {VALID_AI_PROVIDERS}, got '{provider}'")
     if provider == "openai":
-        raw = _score_batch_openai(user_preferences, listings_batch, on_retry)
+        raw = _score_batch_openai(user_preferences, listings_batch, ai_model, on_retry)
     else:
-        raw = _score_batch_anthropic(user_preferences, listings_batch, on_retry)
+        raw = _score_batch_anthropic(user_preferences, listings_batch, ai_model, on_retry)
     return _compute_deterministic_scores(raw)
 
 
-def rank_listings(user_preferences: str, listings: list[dict], ai_provider: str = None) -> list[dict]:
+def rank_listings(user_preferences: str, listings: list[dict], ai_provider: str = None, ai_model: str = None) -> list[dict]:
     """Batches, scores, merges, filters by threshold, sorts best-first.
     Synchronous, blocking, no cancellation — kept for the CLI script and
     anything that just wants a single call/response. The API's /match/start
@@ -465,7 +469,7 @@ def rank_listings(user_preferences: str, listings: list[dict], ai_provider: str 
     scores_by_id = {}
 
     with ThreadPoolExecutor(max_workers=settings.MAX_CONCURRENT_BATCHES) as executor:
-        futures = [executor.submit(score_batch, user_preferences, batch, ai_provider) for batch in batches]
+        futures = [executor.submit(score_batch, user_preferences, batch, ai_provider, ai_model) for batch in batches]
         for future in as_completed(futures):
             for r in future.result():
                 scores_by_id[str(r["mls_id"])] = r  # str() — model may return ids as strings even when source has ints
@@ -529,7 +533,7 @@ def _build_batches(listings: list[dict]) -> list[list[dict]]:
     return [listings] if listings else []
 
 
-def start_match_job(user_preferences: str, listings: list[dict], ai_provider: str = None) -> str:
+def start_match_job(user_preferences: str, listings: list[dict], ai_provider: str = None, ai_model: str = None) -> str:
     job_id = str(uuid.uuid4())
     total_batches = len(_build_batches(listings))
 
@@ -547,12 +551,12 @@ def start_match_job(user_preferences: str, listings: list[dict], ai_provider: st
     with _jobs_lock:
         _jobs[job_id] = job
 
-    thread = threading.Thread(target=_run_job, args=(job_id, user_preferences, listings, ai_provider), daemon=True)
+    thread = threading.Thread(target=_run_job, args=(job_id, user_preferences, listings, ai_provider, ai_model), daemon=True)
     thread.start()
     return job_id
 
 
-def _run_job(job_id: str, user_preferences: str, listings: list[dict], ai_provider: str = None):
+def _run_job(job_id: str, user_preferences: str, listings: list[dict], ai_provider: str = None, ai_model: str = None):
     """
     Runs up to settings.MAX_CONCURRENT_BATCHES batches at once instead of
     one-at-a-time — the sliding-window pattern below submits a fresh batch
@@ -610,7 +614,10 @@ def _run_job(job_id: str, user_preferences: str, listings: list[dict], ai_provid
                     return
                 batch = next(batch_iter, None)
                 if batch is not None:
-                    in_flight[executor.submit(score_batch, user_preferences, batch, ai_provider, on_retry)] = True
+                    in_flight[executor.submit(
+                        score_batch, user_preferences, batch,
+                        ai_provider=ai_provider, ai_model=ai_model, on_retry=on_retry,
+                    )] = True
                 job["in_flight_count"] = len(in_flight)
 
             for _ in range(settings.MAX_CONCURRENT_BATCHES):
